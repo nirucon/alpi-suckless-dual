@@ -4,14 +4,14 @@
 #  Author: Nicklas Rudolfsson (nirucon)
 #
 #  Supports two session variants:
-#    x11     — dwm + suckless-stack (unchanged)
-#    wayland — dwl + waybar + wayland-stack (foot, swaylock, grim, mako…)
-#    both    — install everything, choose at login
+#    x11   — dwm + suckless-stack (X11)
+#    niri  — niri + waybar + wayland-stack (foot, swaylock, mako, wofi…)
+#    both  — install everything, choose at login
 #
 #  Phases (run in order):
 #    core        — upgrade system, btrfs/snapper, base packages, services
 #    suckless    — clone/build dwm, st, dmenu, slock, slstatus  [x11/both]
-#    wayland     — install dwl via AUR + waybar + full wayland stack [wayland/both]
+#    niri        — install niri via AUR + waybar + full wayland stack  [niri/both]
 #    lookandfeel — clone dotfiles/configs/scripts from lookandfeel repo
 #    apps        — pacman + AUR packages
 #    optimize    — zram, sysctl, journald, pacman, makepkg tuning
@@ -19,10 +19,10 @@
 #  Usage:
 #    ./alpi-suckless.sh                          # interactive variant selector
 #    ./alpi-suckless.sh --variant x11            # X11 only (dwm)
-#    ./alpi-suckless.sh --variant wayland        # Wayland only (dwl)
+#    ./alpi-suckless.sh --variant niri           # Wayland only (niri)
 #    ./alpi-suckless.sh --variant both           # install both
 #    ./alpi-suckless.sh --only suckless          # rebuild suckless only
-#    ./alpi-suckless.sh --only wayland           # reinstall wayland stack only
+#    ./alpi-suckless.sh --only niri              # reinstall niri stack only
 #    ./alpi-suckless.sh --only lookandfeel       # refresh dotfiles only
 #    ./alpi-suckless.sh --skip optimize          # skip system tuning
 #    ./alpi-suckless.sh --dry-run                # preview without changes
@@ -39,9 +39,11 @@ IFS=$'\n\t'
 readonly SUCKLESS_REPO="https://github.com/nirucon/suckless"
 readonly LOOKANDFEEL_REPO="https://github.com/nirucon/suckless_lookandfeel"
 readonly LOOKANDFEEL_BRANCH="main"
+readonly NIRI_CONFIG_REPO="https://github.com/nirucon/niri"
 
 readonly SUCKLESS_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/suckless"
 readonly LOOKANDFEEL_DIR="$HOME/.cache/alpi/lookandfeel"
+readonly NIRI_CONFIG_DIR="$HOME/.cache/alpi/niri-config"
 readonly LOCAL_BIN="$HOME/.local/bin"
 readonly XINITRC_HOOKS="$HOME/.config/xinitrc.d"
 readonly SUCKLESS_PREFIX="/usr/local"
@@ -93,23 +95,24 @@ PACMAN_APPS=(
     gtk3 gtk4
 )
 
-# Wayland packages — all from official repos, no source builds needed
-PACMAN_WAYLAND=(
+# Wayland / niri packages — all from official repos
+PACMAN_NIRI=(
     wayland wayland-protocols xorg-xwayland
-    foot                        # terminal — native Wayland, minimal
-    waybar                      # status bar — stable, from extra repo
-    swaylock                    # screen locker
-    swayidle                    # idle management
-    swaybg                      # wallpaper setter
-    grim                        # screenshot
-    slurp                       # region selector for screenshots
-    wl-clipboard                # clipboard (wl-copy / wl-paste)
-    mako                        # notification daemon
-    kanshi                      # output/monitor management
-    xdg-desktop-portal-wlr      # desktop portal for Wayland apps
-    qt5-wayland qt6-wayland     # Qt Wayland backends
-    seatd                       # seat management (required for dwl without logind)
-    libinput                    # input handling
+    foot                          # terminal — native Wayland, minimal
+    waybar                        # status bar
+    swaylock                      # screen locker
+    swayidle                      # idle management
+    swaybg                        # wallpaper setter
+    slurp                         # region selector for screenshots
+    wl-clipboard                  # clipboard (wl-copy / wl-paste)
+    mako                          # notification daemon
+    wofi                          # launcher (used in niri config)
+    kanshi                        # output/monitor management
+    xdg-desktop-portal-gnome      # desktop portal (niri recommended)
+    xdg-desktop-portal            # base portal
+    qt5-wayland qt6-wayland       # Qt Wayland backends
+    libinput                      # input handling
+    polkit-gnome                  # polkit agent for Wayland
 )
 
 AUR_APPS=(
@@ -122,11 +125,9 @@ AUR_APPS=(
     fresh-editor-bin
 )
 
-# dwl via AUR — stable, requires wlroots 0.19
-# wlroots0.19-hidpi-xprop provides the wlroots-0.19 pkg-config that dwl needs
-AUR_WAYLAND=(
-    wlroots0.19-hidpi-xprop     # wlroots 0.19 — required by stable dwl
-    dwl                         # dwl stable — matches wlroots 0.19
+# niri via AUR
+AUR_NIRI=(
+    niri
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -170,7 +171,7 @@ USAGE:
   ./alpi-suckless.sh [flags]
 
 FLAGS:
-  --variant <x11|wayland|both>  Session variant (interactive if omitted)
+  --variant <x11|niri|both>  Session variant (interactive if omitted)
   --only <list>   Run only these phases (comma-separated)
   --skip <list>   Skip these phases (comma-separated)
   --jobs N        Parallel make jobs (default: nproc)
@@ -179,19 +180,19 @@ FLAGS:
   -h|--help       Show this help
 
 PHASES:
-  core, suckless, wayland, lookandfeel, apps, optimize
+  core, suckless, niri, lookandfeel, apps, optimize
 
 VARIANTS:
-  x11     — dwm + suckless tools (X11 only)
-  wayland — dwl + waybar + Wayland stack (foot, swaylock, grim, mako)
-  both    — install everything, interactive session selector at login
+  x11   — dwm + suckless tools (X11 only)
+  niri  — niri + waybar + Wayland stack (foot, swaylock, mako, wofi)
+  both  — install everything, interactive session selector at login
 
 EXAMPLES:
   ./alpi-suckless.sh                           # Interactive setup
   ./alpi-suckless.sh --variant x11             # X11 only
   ./alpi-suckless.sh --variant both            # Install everything
   ./alpi-suckless.sh --only suckless           # Rebuild dwm/st/etc
-  ./alpi-suckless.sh --only wayland            # Reinstall Wayland stack
+  ./alpi-suckless.sh --only niri               # Reinstall niri stack
   ./alpi-suckless.sh --only lookandfeel        # Refresh dotfiles
   ./alpi-suckless.sh --verify                  # Verify installation
   ./alpi-suckless.sh --dry-run --variant both  # Preview everything
@@ -218,8 +219,8 @@ done
 select_variant() {
     if [[ -n "$VARIANT" ]]; then
         case "$VARIANT" in
-            x11|wayland|both) return ;;
-            *) die "Unknown variant '$VARIANT'. Choose: x11, wayland, both" ;;
+            x11|niri|both) return ;;
+            *) die "Unknown variant '$VARIANT'. Choose: x11, niri, both" ;;
         esac
     fi
 
@@ -229,9 +230,9 @@ select_variant() {
             --title "ALPI — NIRUCON Suckless Edition" \
             --menu "\nChoose your session variant:\n" \
             16 62 3 \
-            "x11"     "dwm     · X11 · suckless tools" \
-            "wayland" "dwl     · Wayland · waybar · foot · swaylock" \
-            "both"    "Both    · Install everything, choose at login" \
+            "x11"   "dwm   · X11 · suckless tools" \
+            "niri"  "niri  · Wayland · waybar · foot · swaylock · wofi" \
+            "both"  "Both  · Install everything, choose at login" \
             3>&1 1>&2 2>&3) || die "No variant selected — aborting"
         VARIANT="$choice"
     else
@@ -239,15 +240,15 @@ select_variant() {
         echo "  ╔════════════════════════════════════════════╗"
         echo "  ║     ALPI — NIRUCON Suckless Edition        ║"
         echo "  ╠════════════════════════════════════════════╣"
-        echo "  ║  1)  x11     — dwm (X11 + suckless)       ║"
-        echo "  ║  2)  wayland — dwl (Wayland + waybar)     ║"
-        echo "  ║  3)  both    — install everything          ║"
+        echo "  ║  1)  x11   — dwm (X11 + suckless)         ║"
+        echo "  ║  2)  niri  — niri (Wayland + waybar)      ║"
+        echo "  ║  3)  both  — install everything            ║"
         echo "  ╚════════════════════════════════════════════╝"
         echo ""
         read -r -p "  Your choice [1-3]: " _pick
         case "$_pick" in
             1) VARIANT="x11" ;;
-            2) VARIANT="wayland" ;;
+            2) VARIANT="niri" ;;
             3) VARIANT="both" ;;
             *) die "Invalid choice — aborting" ;;
         esac
@@ -255,8 +256,8 @@ select_variant() {
     ok "Variant: $VARIANT"
 }
 
-want_x11()     { [[ "$VARIANT" == "x11"     || "$VARIANT" == "both" ]]; }
-want_wayland() { [[ "$VARIANT" == "wayland" || "$VARIANT" == "both" ]]; }
+want_x11()  { [[ "$VARIANT" == "x11"  || "$VARIANT" == "both" ]]; }
+want_niri() { [[ "$VARIANT" == "niri" || "$VARIANT" == "both" ]]; }
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPERS
@@ -379,18 +380,21 @@ phase_verify() {
     chk_file "$HOME/.xinitrc"                    "~/.xinitrc"
     chk_dir  "$XINITRC_HOOKS"                    "~/.config/xinitrc.d/"
 
-    echo; info "Wayland — core tools"
-    for cmd in dwl waybar foot swaylock swayidle swaybg grim slurp mako; do
+    echo; info "Wayland — niri + tools"
+    for cmd in niri waybar foot swaylock swayidle swaybg slurp mako wofi; do
         chk_cmd "$cmd"
     done
-    chk_file "$HOME/.config/dwl/autostart.sh"    "dwl autostart"
+    chk_file "$HOME/.config/niri/config.kdl"     "niri config"
     chk_file "$HOME/.config/waybar/config"        "waybar config"
     chk_file "$HOME/.config/waybar/style.css"     "waybar style"
     chk_file "$HOME/.config/foot/foot.ini"        "foot config"
-    chk_file "$LOCAL_BIN/dwl-wallrotate.sh"       "dwl-wallrotate.sh"
+    chk_file "$HOME/.config/wofi/style.css"       "wofi style"
+    chk_file "$LOCAL_BIN/start-niri"              "start-niri script"
+    chk_file "$LOCAL_BIN/niri-wallpaper.sh"       "niri-wallpaper.sh"
+    chk_file "$LOCAL_BIN/niri-wallpaper-rotate.sh" "niri-wallpaper-rotate.sh"
 
     echo; info "Session selector"
-    grep -q "dwl\|startx" "$HOME/.bash_profile" 2>/dev/null && \
+    grep -q "niri\|startx" "$HOME/.bash_profile" 2>/dev/null && \
         ok "~/.bash_profile: session selector present" || \
         warn "~/.bash_profile: no session selector found"
 
@@ -400,7 +404,6 @@ phase_verify() {
 
     echo; info "Services"
     chk_svc NetworkManager
-    chk_svc seatd
     chk_svc tailscaled
     chk_svc "systemd-zram-setup@zram0"
     chk_svc paccache.timer
@@ -487,7 +490,7 @@ phase_core() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PHASE: SUCKLESS (X11 — unchanged from original)
+# PHASE: SUCKLESS (X11 — unchanged)
 # ─────────────────────────────────────────────────────────────────────────────
 
 phase_suckless() {
@@ -558,436 +561,149 @@ HOOK
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PHASE: WAYLAND — dwl via AUR + waybar + full wayland stack
-# All packages from official repos or AUR, no manual source builds
+# PHASE: NIRI — niri via AUR + waybar + full wayland stack
+# Configs cloned from https://github.com/nirucon/niri
 # ─────────────────────────────────────────────────────────────────────────────
 
-phase_wayland() {
-    step "PHASE: wayland — dwl + waybar + wayland stack"
+phase_niri() {
+    step "PHASE: niri — niri + waybar + wayland stack"
 
-    # Install all Wayland packages from official repos
+    # Install Wayland packages from official repos
     say "Installing Wayland packages from official repos..."
-    run sudo pacman -S --needed --noconfirm "${PACMAN_WAYLAND[@]}"
+    run sudo pacman -S --needed --noconfirm "${PACMAN_NIRI[@]}"
 
-    # Enable seatd — required for dwl to access GPU/input without a display manager
-    say "Enabling seatd..."
-    run sudo systemctl enable --now seatd
-    run sudo usermod -aG seat,input,video "$USER"
-    ok "seatd enabled, user added to seat/input/video groups"
+    # Add user to input and video groups (needed for niri with logind)
+    run sudo usermod -aG input,video "$USER"
+    ok "User added to input/video groups"
 
-    # Install dwl + wlroots 0.19 via AUR
-    # wlroots0.19-hidpi-xprop provides wlroots-0.19 pkg-config that dwl requires
+    # Install niri via AUR
     ensure_yay
-    say "Installing dwl + wlroots 0.19 via AUR (this takes a few minutes)..."
-    run yay -S --needed --noconfirm "${AUR_WAYLAND[@]}"
-    ok "dwl installed"
-
-    # ── dwl config — Swedish layout, foot terminal, matched keybindings ──────
-    # Find dwl source dir (yay caches it)
-    local dwl_src=""
-    for d in \
-        "$HOME/.cache/yay/dwl/src/dwl" \
-        "$HOME/.cache/yay/dwl-git/src/dwl"
-    do
-        [[ -f "$d/config.def.h" ]] && dwl_src="$d" && break
-    done
-
-    if [[ -n "$dwl_src" && $DRY_RUN -eq 0 ]]; then
-        say "Writing dwl config.h (Swedish layout, foot, MatteBlack colors)..."
-        cat > "$dwl_src/config.h" <<'DWLCONF'
-/* dwl config — NIRUCON
- * Swedish keyboard, foot terminal, keybindings mirroring dwm
- */
-
-/* appearance */
-static const int sloppyfocus               = 1;
-static const int bypass_surface_visibility = 0;
-static const unsigned int borderpx         = 2;
-static const float rootcolor[]             = {0.059, 0.059, 0.063, 1.0};
-static const float bordercolor[]           = {0.165, 0.165, 0.176, 1.0};
-static const float focuscolor[]            = {0.353, 0.353, 0.376, 1.0};
-static const float urgentcolor[]           = {0.749, 0.149, 0.149, 1.0};
-
-static const char *tags[] = { "1","2","3","4","5","6","7","8","9" };
-
-static const Rule rules[] = {
-    /* app_id        title  tags  isfloating  monitor */
-    { "gimp",        NULL,  0,    1,          -1 },
-    { "pavucontrol", NULL,  0,    1,          -1 },
-};
-
-static const Layout layouts[] = {
-    { "[]=", tile },    /* 0 — tile (default) */
-    { "[M]", monocle }, /* 1 — monocle */
-    { "><>", NULL },    /* 2 — floating */
-};
-
-static const MonitorRule monrules[] = {
-    { NULL, NULL, 0, 1, 0, WL_OUTPUT_TRANSFORM_NORMAL, -1, -1 },
-};
-
-/* Swedish keyboard layout */
-static const struct xkb_rule_names xkb_rules = {
-    .rules   = NULL,
-    .model   = NULL,
-    .layout  = "se",
-    .variant = NULL,
-    .options = NULL,
-};
-
-static const int repeat_rate  = 25;
-static const int repeat_delay = 300;
-
-#define MODKEY WLR_MODIFIER_LOGO
-#define TAGKEYS(KEY,SKEY,TAG) \
-    { MODKEY,                                     KEY,  view,       {.ui = 1 << TAG} }, \
-    { MODKEY|WLR_MODIFIER_CTRL,                   KEY,  toggleview, {.ui = 1 << TAG} }, \
-    { MODKEY|WLR_MODIFIER_SHIFT,                 SKEY,  tag,        {.ui = 1 << TAG} }, \
-    { MODKEY|WLR_MODIFIER_CTRL|WLR_MODIFIER_SHIFT,SKEY, toggletag,  {.ui = 1 << TAG} },
-
-#define SHCMD(cmd) { .v = (const char*[]){ "/bin/sh", "-c", cmd, NULL } }
-
-/* commands */
-static const char *footcmd[]      = { "foot", NULL };
-static const char *alacrittycmd[] = { "alacritty", NULL };
-static const char *bravecmd[]     = { "brave", NULL };
-static const char *roficmd[]      = { "rofi", "-show", "run", NULL };
-static const char *fmcmd[]        = { "pcmanfm", NULL };
-static const char *lockcmd[]      = { "swaylock", "-f", "--color", "0f0f10", NULL };
-static const char *wallnext[]     = { "/bin/sh", "-c",
-                                      "$HOME/.local/bin/dwl-wallrotate.sh next", NULL };
-
-/* volume */
-static const char *vol_up[]     = { "wpctl","set-volume","@DEFAULT_AUDIO_SINK@","5%+",NULL };
-static const char *vol_down[]   = { "wpctl","set-volume","@DEFAULT_AUDIO_SINK@","5%-",NULL };
-static const char *vol_toggle[] = { "wpctl","set-mute","@DEFAULT_AUDIO_SINK@","toggle",NULL };
-static const char *mic_toggle[] = { "wpctl","set-mute","@DEFAULT_AUDIO_SOURCE@","toggle",NULL };
-
-/* media */
-static const char *media_play[] = { "playerctl","play-pause",NULL };
-static const char *media_next[] = { "playerctl","next",NULL };
-static const char *media_prev[] = { "playerctl","previous",NULL };
-
-/* brightness */
-static const char *br_up[]   = { "brightnessctl","set","+5%",NULL };
-static const char *br_down[] = { "brightnessctl","set","5%-",NULL };
-
-/* screenshots */
-static const char *ss_select[] = { "/bin/sh","-c",
-    "mkdir -p $HOME/Pictures/Screenshots && "
-    "grim -g \"$(slurp)\" $HOME/Pictures/Screenshots/$(date +%F_%H-%M-%S).png && "
-    "notify-send Screenshot 'Region saved'", NULL };
-static const char *ss_full[] = { "/bin/sh","-c",
-    "mkdir -p $HOME/Pictures/Screenshots && "
-    "grim $HOME/Pictures/Screenshots/$(date +%F_%H-%M-%S).png && "
-    "notify-send Screenshot 'Full screen saved'", NULL };
-
-static const Key keys[] = {
-    /* Launchers */
-    { MODKEY,                    XKB_KEY_Return,      spawn,          {.v = footcmd} },
-    { MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_Return,      spawn,          {.v = alacrittycmd} },
-    { MODKEY,                    XKB_KEY_b,           spawn,          {.v = bravecmd} },
-    { MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_p,           spawn,          {.v = roficmd} },
-    { MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_f,           spawn,          {.v = fmcmd} },
-
-    /* Lock / suspend */
-    { MODKEY,                    XKB_KEY_Escape,      spawn,          {.v = lockcmd} },
-    { MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_Escape,      spawn, SHCMD("systemctl suspend") },
-
-    /* Wallpaper */
-    { MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_w,           spawn,          {.v = wallnext} },
-
-    /* Window / layout — mirrors dwm */
-    { MODKEY,                    XKB_KEY_j,           focusstack,     {.i = +1} },
-    { MODKEY,                    XKB_KEY_k,           focusstack,     {.i = -1} },
-    { MODKEY,                    XKB_KEY_h,           setmfact,       {.f = -0.05} },
-    { MODKEY,                    XKB_KEY_l,           setmfact,       {.f = +0.05} },
-    { MODKEY,                    XKB_KEY_i,           incnmaster,     {.i = +1} },
-    { MODKEY,                    XKB_KEY_d,           incnmaster,     {.i = -1} },
-    { MODKEY,                    XKB_KEY_Tab,         view,           {0} },
-    { MODKEY,                    XKB_KEY_space,       setlayout,      {0} },
-    { MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_space,       togglefloating, {0} },
-
-    /* Layouts */
-    { MODKEY,                    XKB_KEY_t,           setlayout, {.v = &layouts[0]} },
-    { MODKEY,                    XKB_KEY_m,           setlayout, {.v = &layouts[1]} },
-    { MODKEY,                    XKB_KEY_f,           setlayout, {.v = &layouts[2]} },
-
-    /* Bar */
-    { MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_b,           togglebar,      {0} },
-
-    /* Kill / quit */
-    { MODKEY,                    XKB_KEY_q,           killclient,     {0} },
-    { MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_q,           quit,           {0} },
-
-    /* Tags 1-9 */
-    TAGKEYS(XKB_KEY_1, XKB_KEY_exclam,      0)
-    TAGKEYS(XKB_KEY_2, XKB_KEY_at,          1)
-    TAGKEYS(XKB_KEY_3, XKB_KEY_numbersign,  2)
-    TAGKEYS(XKB_KEY_4, XKB_KEY_dollar,      3)
-    TAGKEYS(XKB_KEY_5, XKB_KEY_percent,     4)
-    TAGKEYS(XKB_KEY_6, XKB_KEY_asciicircum, 5)
-    TAGKEYS(XKB_KEY_7, XKB_KEY_ampersand,   6)
-    TAGKEYS(XKB_KEY_8, XKB_KEY_asterisk,    7)
-    TAGKEYS(XKB_KEY_9, XKB_KEY_parenleft,   8)
-    { MODKEY,                    XKB_KEY_0,           view,  {.ui = ~0} },
-    { MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_0,           tag,   {.ui = ~0} },
-
-    /* Monitors */
-    { MODKEY,                    XKB_KEY_comma,       focusmon, {.i = -1} },
-    { MODKEY,                    XKB_KEY_period,      focusmon, {.i = +1} },
-    { MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_comma,       tagmon,   {.i = -1} },
-    { MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_period,      tagmon,   {.i = +1} },
-
-    /* Screenshots */
-    { 0,    XKB_KEY_Print,       spawn, {.v = ss_select} },
-    { MODKEY,XKB_KEY_Print,      spawn, {.v = ss_full} },
-
-    /* Audio */
-    { 0, XKB_KEY_XF86AudioRaiseVolume, spawn, {.v = vol_up} },
-    { 0, XKB_KEY_XF86AudioLowerVolume, spawn, {.v = vol_down} },
-    { 0, XKB_KEY_XF86AudioMute,        spawn, {.v = vol_toggle} },
-    { 0, XKB_KEY_XF86AudioMicMute,     spawn, {.v = mic_toggle} },
-
-    /* Media */
-    { 0, XKB_KEY_XF86AudioPlay,  spawn, {.v = media_play} },
-    { 0, XKB_KEY_XF86AudioPause, spawn, {.v = media_play} },
-    { 0, XKB_KEY_XF86AudioNext,  spawn, {.v = media_next} },
-    { 0, XKB_KEY_XF86AudioPrev,  spawn, {.v = media_prev} },
-
-    /* Brightness */
-    { 0, XKB_KEY_XF86MonBrightnessUp,   spawn, {.v = br_up} },
-    { 0, XKB_KEY_XF86MonBrightnessDown, spawn, {.v = br_down} },
-};
-
-static const Button buttons[] = {
-    { MODKEY, BTN_LEFT,   moveresize,     {.ui = CurMove} },
-    { MODKEY, BTN_MIDDLE, togglefloating, {0} },
-    { MODKEY, BTN_RIGHT,  moveresize,     {.ui = CurResize} },
-};
-DWLCONF
-
-        say "Rebuilding dwl with custom config..."
-        (
-            cd "$dwl_src"
-            make clean
-            make -j"$JOBS"
-            sudo make PREFIX="$SUCKLESS_PREFIX" install
-        )
-        ok "dwl rebuilt with custom config"
-    elif [[ $DRY_RUN -eq 1 ]]; then
-        say "[dry-run] Would write dwl config.h and rebuild"
-    else
-        warn "dwl source not found in yay cache — skipping config, using defaults"
-        warn "Keybindings may differ. Re-run --only wayland after 'yay -S dwl'"
-    fi
-
-    # ── waybar config — minimal MatteBlack ───────────────────────────────────
-    say "Writing waybar config..."
-    ensure_dir "$HOME/.config/waybar"
-
-    if [[ $DRY_RUN -eq 0 ]]; then
-        cat > "$HOME/.config/waybar/config" <<'WAYBARCONF'
-{
-    "layer": "top",
-    "position": "top",
-    "height": 24,
-    "spacing": 4,
-    "modules-left": ["dwl/tags", "dwl/layout", "dwl/window"],
-    "modules-right": ["pulseaudio", "network", "battery", "clock"],
-    "dwl/tags": { "num-tags": 9 },
-    "dwl/layout": { "format": "{}" },
-    "dwl/window": { "format": "{}", "max-length": 50 },
-    "clock": {
-        "format": " {:%a %d %b  %H:%M}",
-        "tooltip-format": "<big>{:%Y %B}</big>\n<tt><small>{calendar}</small></tt>"
-    },
-    "battery": {
-        "states": { "warning": 30, "critical": 15 },
-        "format": "{icon} {capacity}%",
-        "format-charging": " {capacity}%",
-        "format-icons": ["", "", "", "", ""]
-    },
-    "network": {
-        "format-wifi": " {signalStrength}%",
-        "format-ethernet": " connected",
-        "format-disconnected": " disconnected",
-        "tooltip-format": "{essid} — {ipaddr}"
-    },
-    "pulseaudio": {
-        "format": "{icon} {volume}%",
-        "format-muted": " muted",
-        "format-icons": { "default": ["", "", ""] },
-        "on-click": "pavucontrol"
-    }
-}
-WAYBARCONF
-
-        # Use printf to expand color variables into the CSS
-        printf '/* waybar style — NIRUCON MatteBlack */
-* {
-    font-family: "JetBrainsMono Nerd Font", monospace;
-    font-size: 12px;
-    border: none;
-    border-radius: 0;
-    min-height: 0;
-}
-window#waybar {
-    background-color: %s;
-    color: %s;
-}
-#tags button {
-    padding: 0 6px;
-    color: %s;
-    background: transparent;
-}
-#tags button.occupied,
-#tags button.focused {
-    color: %s;
-    background-color: %s;
-}
-#tags button.urgent {
-    color: %s;
-    background-color: #8b1a1a;
-}
-#layout, #window { padding: 0 8px; color: %s; }
-#clock, #battery, #network, #pulseaudio { padding: 0 10px; color: %s; }
-#battery.warning { color: #e5a050; }
-#battery.critical { color: #e55050; }
-' \
-            "$COL_BG" "$COL_FG" \
-            "$COL_FG_DIM" \
-            "$COL_FG" "$COL_ACCENT" \
-            "$COL_FG" \
-            "$COL_FG_DIM" "$COL_FG" \
-            > "$HOME/.config/waybar/style.css"
-    fi
-    ok "waybar config written"
-
-    # ── foot config ───────────────────────────────────────────────────────────
-    say "Writing foot config..."
-    ensure_dir "$HOME/.config/foot"
-    if [[ $DRY_RUN -eq 0 ]]; then
-        printf '[main]\nfont=JetBrainsMono Nerd Font:size=11\n\n[colors]\nbackground=%s\nforeground=%s\n' \
-            "${COL_BG#\#}" "${COL_FG#\#}" > "$HOME/.config/foot/foot.ini"
-    fi
-    ok "foot config written"
-
-    # ── mako config ───────────────────────────────────────────────────────────
-    say "Writing mako config..."
-    ensure_dir "$HOME/.config/mako"
-    if [[ $DRY_RUN -eq 0 ]]; then
-        printf 'font=JetBrainsMono Nerd Font 11\nbackground-color=%s\ntext-color=%s\nborder-color=%s\nborder-size=2\nborder-radius=0\nwidth=350\nmargin=10\npadding=10\ndefault-timeout=5000\n' \
-            "$COL_BG" "$COL_FG" "$COL_BORDER_SEL" > "$HOME/.config/mako/config"
-    fi
-    ok "mako config written"
-
-    # ── dwl-wallrotate.sh ─────────────────────────────────────────────────────
-    say "Writing dwl-wallrotate.sh..."
-    ensure_dir "$LOCAL_BIN"
-    if [[ $DRY_RUN -eq 0 ]]; then
-        cat > "$LOCAL_BIN/dwl-wallrotate.sh" <<'WALLSCRIPT'
-#!/bin/sh
-# dwl-wallrotate.sh — rotating wallpapers via swaybg
-# Usage: dwl-wallrotate.sh [next|start]
-
-WALLDIR="$HOME/Wallpapers"
-STATEFILE="$HOME/.cache/alpi/dwl-wallpaper-index"
-INTERVAL=300
-
-mkdir -p "$(dirname "$STATEFILE")"
-[ -d "$WALLDIR" ] || { notify-send "Wallpaper" "No ~/Wallpapers directory"; exit 1; }
-
-walls=()
-while IFS= read -r -d '' f; do
-    walls+=("$f")
-done < <(find "$WALLDIR" -maxdepth 1 -type f \
-    \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \) -print0 | sort -z)
-
-[ "${#walls[@]}" -eq 0 ] && { notify-send "Wallpaper" "No images in ~/Wallpapers"; exit 1; }
-
-idx=0
-[ -f "$STATEFILE" ] && idx=$(cat "$STATEFILE") || true
-
-case "${1:-start}" in
-    next)
-        idx=$(( (idx + 1) % ${#walls[@]} ))
-        echo "$idx" > "$STATEFILE"
-        pkill -x swaybg 2>/dev/null || true
-        sleep 0.2
-        swaybg -m fill -i "${walls[$idx]}" &
-        ;;
-    start)
-        while true; do
-            pkill -x swaybg 2>/dev/null || true
-            sleep 0.2
-            swaybg -m fill -i "${walls[$idx]}" &
-            echo "$idx" > "$STATEFILE"
-            sleep "$INTERVAL"
-            idx=$(( (idx + 1) % ${#walls[@]} ))
-        done
-        ;;
-esac
-WALLSCRIPT
-        chmod 755 "$LOCAL_BIN/dwl-wallrotate.sh"
-    fi
-    ok "dwl-wallrotate.sh written"
-
-    # ── dwl autostart script ──────────────────────────────────────────────────
-    say "Writing dwl autostart script..."
-    ensure_dir "$HOME/.config/dwl"
-    if [[ $DRY_RUN -eq 0 ]]; then
-        cat > "$HOME/.config/dwl/autostart.sh" <<'AUTOSTART'
-#!/bin/sh
-# dwl autostart — run via: dwl -s ~/.config/dwl/autostart.sh
-
-# Notification daemon
-command -v mako >/dev/null 2>&1 && mako &
-
-# Status bar
-command -v waybar >/dev/null 2>&1 && waybar &
-
-# Wallpaper
-if [ -x "$HOME/.local/bin/dwl-wallrotate.sh" ]; then
-    "$HOME/.local/bin/dwl-wallrotate.sh" start &
-elif command -v swaybg >/dev/null 2>&1 && [ -d "$HOME/Wallpapers" ]; then
-    swaybg -m fill -i "$(find "$HOME/Wallpapers" -type f | shuf -n1)" &
-fi
-
-# Idle management — lock after 10 min, suspend after 20 min
-command -v swayidle >/dev/null 2>&1 && swayidle -w \
-    timeout 600  'swaylock -f --color 0f0f10' \
-    timeout 1200 'systemctl suspend' \
-    before-sleep 'swaylock -f --color 0f0f10' &
-
-# Disk automounter
-command -v udiskie >/dev/null 2>&1 && udiskie --tray &
-
-# Bluetooth tray
-command -v blueman-applet >/dev/null 2>&1 && blueman-applet &
-
-# Nextcloud
-command -v nextcloud >/dev/null 2>&1 && nextcloud --background &
-AUTOSTART
-        chmod 755 "$HOME/.config/dwl/autostart.sh"
-    fi
-    ok "dwl autostart written"
-
-    # ── Wayland environment variables ─────────────────────────────────────────
-    say "Setting Wayland environment variables in ~/.bash_profile..."
-    local profile="$HOME/.bash_profile"
-    [[ -f "$profile" ]] || touch "$profile"
-    grep -qxF 'export LIBSEAT_BACKEND=seatd'    "$profile" || echo 'export LIBSEAT_BACKEND=seatd'    >> "$profile"
-    grep -qxF 'export XDG_SESSION_TYPE=wayland'  "$profile" || echo 'export XDG_SESSION_TYPE=wayland'  >> "$profile"
-    grep -qxF 'export MOZ_ENABLE_WAYLAND=1'      "$profile" || echo 'export MOZ_ENABLE_WAYLAND=1'      >> "$profile"
-    grep -qxF 'export QT_QPA_PLATFORM=wayland'   "$profile" || echo 'export QT_QPA_PLATFORM=wayland'   >> "$profile"
+    say "Installing niri via AUR..."
+    run yay -S --needed --noconfirm "${AUR_NIRI[@]}"
+    ok "niri installed"
 
     # Enable pipewire as user service
     run systemctl --user enable --now pipewire pipewire-pulse wireplumber 2>/dev/null || \
         warn "pipewire user service enable failed (non-fatal)"
 
-    ok "Phase wayland done"
-    warn "IMPORTANT: Log out and back in for group changes to take effect (seat/input/video)"
+    # Enable polkit agent — needed for privilege escalation in Wayland sessions
+    say "Enabling polkit-gnome autostart..."
+    ensure_dir "$HOME/.config/autostart"
+    if [[ $DRY_RUN -eq 0 ]]; then
+        cat > "$HOME/.config/autostart/polkit-gnome.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=PolicyKit Authentication Agent
+Exec=/usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1
+NoDisplay=true
+X-GNOME-AutoRestart=false
+EOF
+    fi
+
+    # Clone niri config repo
+    say "Cloning niri config repo..."
+    git_sync "$NIRI_CONFIG_REPO" "$NIRI_CONFIG_DIR"
+
+    local nc="$NIRI_CONFIG_DIR"
+
+    if [[ $DRY_RUN -eq 0 ]]; then
+        # ── niri config ───────────────────────────────────────────────────────
+        say "Deploying niri/config.kdl → ~/.config/niri/config.kdl..."
+        if [[ -f "$nc/niri/config.kdl" ]]; then
+            ensure_dir "$HOME/.config/niri"
+            run install -Dm644 "$nc/niri/config.kdl" "$HOME/.config/niri/config.kdl"
+            ok "~/.config/niri/config.kdl"
+        else
+            warn "niri/config.kdl not found in repo — skipping"
+        fi
+
+        # ── waybar config + style ─────────────────────────────────────────────
+        say "Deploying waybar config..."
+        ensure_dir "$HOME/.config/waybar/scripts"
+        if [[ -f "$nc/waybar/config" ]]; then
+            run install -Dm644 "$nc/waybar/config" "$HOME/.config/waybar/config"
+            ok "~/.config/waybar/config"
+        else
+            warn "waybar/config not found in repo — skipping"
+        fi
+        if [[ -f "$nc/waybar/style.css" ]]; then
+            run install -Dm644 "$nc/waybar/style.css" "$HOME/.config/waybar/style.css"
+            ok "~/.config/waybar/style.css"
+        else
+            warn "waybar/style.css not found in repo — skipping"
+        fi
+
+        # ── waybar scripts (make executable) ─────────────────────────────────
+        if [[ -d "$nc/waybar/scripts" ]]; then
+            say "Deploying waybar scripts..."
+            for script in "$nc/waybar/scripts/"*.sh; do
+                [[ -f "$script" ]] || continue
+                run install -Dm755 "$script" "$HOME/.config/waybar/scripts/$(basename "$script")"
+                ok "~/.config/waybar/scripts/$(basename "$script")"
+            done
+        else
+            warn "waybar/scripts not found in repo — skipping"
+        fi
+
+        # ── foot config ───────────────────────────────────────────────────────
+        say "Deploying foot config..."
+        if [[ -f "$nc/foot/foot.ini" ]]; then
+            ensure_dir "$HOME/.config/foot"
+            run install -Dm644 "$nc/foot/foot.ini" "$HOME/.config/foot/foot.ini"
+            ok "~/.config/foot/foot.ini"
+        else
+            warn "foot/foot.ini not found in repo — skipping"
+        fi
+
+        # ── wofi config ───────────────────────────────────────────────────────
+        say "Deploying wofi config..."
+        if [[ -f "$nc/wofi/style.css" ]]; then
+            ensure_dir "$HOME/.config/wofi"
+            run install -Dm644 "$nc/wofi/style.css" "$HOME/.config/wofi/style.css"
+            ok "~/.config/wofi/style.css"
+        else
+            warn "wofi/style.css not found in repo — skipping"
+        fi
+
+        # ── environment.d ─────────────────────────────────────────────────────
+        say "Deploying environment.d config..."
+        if [[ -f "$nc/environment.d/10-theme.conf" ]]; then
+            ensure_dir "$HOME/.config/environment.d"
+            run install -Dm644 "$nc/environment.d/10-theme.conf" \
+                "$HOME/.config/environment.d/10-theme.conf"
+            ok "~/.config/environment.d/10-theme.conf"
+        else
+            warn "environment.d/10-theme.conf not found in repo — skipping"
+        fi
+
+        # ── local/bin scripts (make executable) ───────────────────────────────
+        say "Deploying local/bin scripts..."
+        ensure_dir "$LOCAL_BIN"
+        if [[ -d "$nc/local/bin" ]]; then
+            for f in "$nc/local/bin/"*; do
+                [[ -f "$f" ]] || continue
+                run install -Dm755 "$f" "$LOCAL_BIN/$(basename "$f")"
+                ok "~/.local/bin/$(basename "$f")"
+            done
+        else
+            warn "local/bin not found in repo — skipping"
+        fi
+    else
+        say "[dry-run] Would deploy niri configs from $NIRI_CONFIG_DIR"
+    fi
+
+    # ── Wayland environment variables ─────────────────────────────────────────
+    say "Setting Wayland environment variables in ~/.bash_profile..."
+    local profile="$HOME/.bash_profile"
+    [[ -f "$profile" ]] || touch "$profile"
+    grep -qxF 'export XDG_SESSION_TYPE=wayland'  "$profile" || echo 'export XDG_SESSION_TYPE=wayland'  >> "$profile"
+    grep -qxF 'export MOZ_ENABLE_WAYLAND=1'      "$profile" || echo 'export MOZ_ENABLE_WAYLAND=1'      >> "$profile"
+    grep -qxF 'export QT_QPA_PLATFORM=wayland'   "$profile" || echo 'export QT_QPA_PLATFORM=wayland'   >> "$profile"
+    grep -qxF 'export ELECTRON_OZONE_PLATFORM_HINT=wayland' "$profile" || \
+        echo 'export ELECTRON_OZONE_PLATFORM_HINT=wayland' >> "$profile"
+
+    ok "Phase niri done"
+    warn "IMPORTANT: Log out and back in for group changes to take effect (input/video)"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1076,13 +792,13 @@ if [ -z "$DISPLAY" ] && [ -z "$WAYLAND_DISPLAY" ] && [ "$(tty)" = "/dev/tty1" ];
     echo "  │      NIRUCON — Choose your session       │"
     echo "  ├──────────────────────────────────────────┤"
     echo "  │   1)  dwm  ·  X11     (suckless)        │"
-    echo "  │   2)  dwl  ·  Wayland (waybar + foot)   │"
-    echo "  │   3)  bash ·  Shell prompt only          │"
+    echo "  │   2)  niri ·  Wayland (waybar + foot)   │"
+    echo "  │   3)  exit ·  Shell prompt only          │"
     echo "  └──────────────────────────────────────────┘"
     echo ""
     read -r -p "  Session [1/2/3, Enter = dwm]: " _ses
     case "$_ses" in
-        2) exec dwl -s "$HOME/.config/dwl/autostart.sh" ;;
+        2) exec "$HOME/.local/bin/start-niri" ;;
         3) : ;;
         *) exec startx ;;
     esac
@@ -1100,7 +816,7 @@ if [ -z "$DISPLAY" ] && [ -z "$WAYLAND_DISPLAY" ] && [ "$(tty)" = "/dev/tty1" ];
     echo "  │      NIRUCON — Choose your session       │"
     echo "  ├──────────────────────────────────────────┤"
     echo "  │   1)  dwm  ·  X11 (suckless)            │"
-    echo "  │   2)  bash ·  Shell prompt only          │"
+    echo "  │   2)  exit ·  Shell prompt only          │"
     echo "  └──────────────────────────────────────────┘"
     echo ""
     read -r -p "  Session [1/2, Enter = dwm]: " _ses
@@ -1112,7 +828,7 @@ fi
 # <<< ALPI SESSION SELECTOR
 SELECTOR
 
-        elif [[ "$VARIANT" == "wayland" ]]; then
+        elif [[ "$VARIANT" == "niri" ]]; then
             cat >> "$profile" <<'SELECTOR'
 
 # >>> ALPI SESSION SELECTOR — managed by alpi-suckless.sh
@@ -1121,14 +837,14 @@ if [ -z "$DISPLAY" ] && [ -z "$WAYLAND_DISPLAY" ] && [ "$(tty)" = "/dev/tty1" ];
     echo "  ┌──────────────────────────────────────────┐"
     echo "  │      NIRUCON — Choose your session       │"
     echo "  ├──────────────────────────────────────────┤"
-    echo "  │   1)  dwl  ·  Wayland (waybar + foot)   │"
-    echo "  │   2)  bash ·  Shell prompt only          │"
+    echo "  │   1)  niri ·  Wayland (waybar + foot)   │"
+    echo "  │   2)  exit ·  Shell prompt only          │"
     echo "  └──────────────────────────────────────────┘"
     echo ""
-    read -r -p "  Session [1/2, Enter = dwl]: " _ses
+    read -r -p "  Session [1/2, Enter = niri]: " _ses
     case "$_ses" in
         2) : ;;
-        *) exec dwl -s "$HOME/.config/dwl/autostart.sh" ;;
+        *) exec "$HOME/.local/bin/start-niri" ;;
     esac
 fi
 # <<< ALPI SESSION SELECTOR
@@ -1316,8 +1032,8 @@ main() {
         want_x11 && phase_suckless || info "Skipping suckless (variant: $VARIANT)"
     fi
 
-    if should_run wayland; then
-        want_wayland && phase_wayland || info "Skipping wayland (variant: $VARIANT)"
+    if should_run niri; then
+        want_niri && phase_niri || info "Skipping niri (variant: $VARIANT)"
     fi
 
     should_run lookandfeel && phase_lookandfeel
@@ -1328,14 +1044,14 @@ main() {
     say "════════════════════════════════════════"
     ok  "All selected phases completed!"
     say "  → Reboot to apply all changes"
-    if want_x11;     then say "  → X11:     startx (via session selector)"; fi
-    if want_wayland; then say "  → Wayland: dwl -s ~/.config/dwl/autostart.sh"; fi
+    if want_x11;  then say "  → X11:     startx (via session selector)"; fi
+    if want_niri; then say "  → Wayland: ~/.local/bin/start-niri"; fi
     say "  → Verify:  ./alpi-suckless.sh --verify"
     say "════════════════════════════════════════"
     echo
-    if want_wayland; then
-        warn "IMPORTANT: Log out and back in before starting dwl"
-        warn "           (group changes for seat/input/video need a fresh login)"
+    if want_niri; then
+        warn "IMPORTANT: Log out and back in before starting niri"
+        warn "           (group changes for input/video need a fresh login)"
     fi
 }
 
